@@ -240,7 +240,7 @@ main(int argc , char **argv)
 	s3.host += 3;
 	
 	if(strstr(argv[0], "s3://")==argv[0]){
-		if(strstr(argv[0], "s3://")==argv[1])
+		if(strstr(argv[1], "s3://")==argv[1])
 			sysfatal("s3:// → s3:// not implemented");
 		s3.bucket = strdup(argv[0]+5);
 		localpath = strdup(argv[1]);
