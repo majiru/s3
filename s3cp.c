@@ -12,6 +12,14 @@ typedef struct {
 	char *region;
 } S3;
 
+typedef struct {
+	char method[16];
+	char time[128];
+	uchar payhash[SHA2_256dlen];
+	char authhdr[512];
+	char mime[32];
+} Hreq;
+
 static void
 datetime(char *date, int ndate, char *time, int ntime)
 {
@@ -23,7 +31,6 @@ datetime(char *date, int ndate, char *time, int ntime)
 }
 
 #define hmac(data, dlen, key, klen, digest) hmac_sha2_256(data, dlen, key, klen, digest, nil)
-#define hash(data, dlen, digest) sha2_256(data, dlen, digest, nil)
 
 static void
 mkkey(char *key, char *date, char *region, char *service, uchar out[SHA2_256dlen])
@@ -38,69 +45,52 @@ mkkey(char *key, char *date, char *region, char *service, uchar out[SHA2_256dlen
 }
 
 static void
-prepupload(S3 *s3, int cfd, char *path, uchar hash[SHA2_256dlen], char *mime)
+mkhreq(Hreq *hreq, S3 *s3, char *method, char *path)
 {
 	char date[64];
-	char time[128];
 	uchar key[SHA2_256dlen], sig[SHA2_256dlen];
 	char buf[512], req[512];
+	char *sgndhdr;
 
-	datetime(date, sizeof date, time, sizeof time);
+	datetime(date, sizeof date, hreq->time, sizeof hreq->time);
+	if(strcmp(method, "PUT") == 0){
+		snprint(buf, sizeof buf, "content-type:%s\nhost:%s\nx-amz-content-sha256:%.*lH\nx-amz-date:%s\n",
+			hreq->mime, s3->host, SHA2_256dlen, hreq->payhash, hreq->time);
+		sgndhdr = "content-type;host;x-amz-content-sha256;x-amz-date";
+	} else if(strcmp(method, "GET") == 0){
+		hreq->mime[0] = 0;
+		sha2_256(nil, 0, hreq->payhash, nil);
+		snprint(buf, sizeof buf, "host:%s\nx-amz-date:%s\n", s3->host, hreq->time);
+		sgndhdr = "host;x-amz-date";
+	} else
+		sysfatal("invalid method");
 
-	snprint(buf, sizeof buf, "content-type:%s\nhost:%s\nx-amz-content-sha256:%.*lH\nx-amz-date:%s\n",
-		mime, s3->host, SHA2_256dlen, hash, time);
-	snprint(req, sizeof req, "PUT\n/%s/%s\n%s\n%s\n%s\n%.*lH",
-		s3->bucket, path, "", buf, "content-type;host;x-amz-content-sha256;x-amz-date", SHA2_256dlen, hash);
-	hash((uchar*)req, strlen(req), key);
+	snprint(req, sizeof req, "%s\n/%s/%s\n%s\n%s\n%s\n%.*lH",
+		method, s3->bucket, path, "", buf, sgndhdr, SHA2_256dlen, hreq->payhash);
+	sha2_256((uchar*)req, strlen(req), key, nil);
 	snprint(buf, sizeof buf, "%s\n%s\n%s/%s/%s/aws4_request\n%.*lH",
-		"AWS4-HMAC-SHA256", time, date, s3->region, "s3", SHA2_256dlen, key);
+		"AWS4-HMAC-SHA256", hreq->time, date, s3->region, "s3", SHA2_256dlen, key);
 	mkkey(s3->secret, date, s3->region, "s3", key);
 	hmac((uchar*)buf, strlen(buf), key, SHA2_256dlen, sig);
-	snprint(buf, sizeof buf, "%s Credential=%s/%s/%s/%s/aws4_request, SignedHeaders=%s, Signature=%.*lH",
-		"AWS4-HMAC-SHA256", s3->access, date, s3->region, "s3", "content-type;host;x-amz-content-sha256;x-amz-date",
-		SHA2_256dlen, sig);
 
-	if(fprint(cfd, "url %s/%s/%s", s3->endpoint, s3->bucket, path) < 0)
-		sysfatal("url: %r");
-	if(fprint(cfd, "request PUT") < 0)
-		sysfatal("request: %r");
-	if(fprint(cfd, "headers Authorization:%s", buf) < 0)
-		sysfatal("headers2: %r");
-	if(fprint(cfd, "headers x-amz-date:%s\nx-amz-content-sha256:%.*lH", time, SHA2_256dlen, hash) < 0)
-		sysfatal("headers: %r");
-	if(fprint(cfd, "contenttype %s", mime) < 0)
-		sysfatal("contenttype: %r");
+	snprint(hreq->authhdr, sizeof hreq->authhdr, "%s Credential=%s/%s/%s/%s/aws4_request, SignedHeaders=%s, Signature=%.*lH",
+		"AWS4-HMAC-SHA256", s3->access, date, s3->region, "s3", sgndhdr, SHA2_256dlen, sig);
+	snprint(hreq->method, sizeof hreq->method, "%s", method);
 }
 
 static void
-prepdownload(S3 *s3, int cfd, char *path)
+prep(S3 *s3, int cfd, char *path, Hreq *hreq)
 {
-	char date[64];
-	char time[128];
-	uchar hash[SHA2_256dlen], key[SHA2_256dlen], sig[SHA2_256dlen];
-	char buf[512], req[512];
-
-	datetime(date, sizeof date, time, sizeof time);
-	hash(nil, 0, hash);
-
-	snprint(buf, sizeof buf, "host:%s\nx-amz-date:%s\n", s3->host, time);
-	snprint(req, sizeof req, "GET\n/%s/%s\n%s\n%s\n%s\n%.*lH",
-		s3->bucket, path, "", buf, "host;x-amz-date", SHA2_256dlen, hash);
-	hash((uchar*)req, strlen(req), key);
-	snprint(buf, sizeof buf, "%s\n%s\n%s/%s/%s/aws4_request\n%.*lH",
-		"AWS4-HMAC-SHA256", time, date, s3->region, "s3", SHA2_256dlen, key);
-	mkkey(s3->secret, date, s3->region, "s3", key);
-	hmac((uchar*)buf, strlen(buf), key, SHA2_256dlen, sig);
-	snprint(buf, sizeof buf, "%s Credential=%s/%s/%s/%s/aws4_request, SignedHeaders=%s, Signature=%.*lH",
-		"AWS4-HMAC-SHA256", s3->access, date, s3->region, "s3", "host;x-amz-date",
-		SHA2_256dlen, sig);
-
 	if(fprint(cfd, "url %s/%s/%s", s3->endpoint, s3->bucket, path) < 0)
 		sysfatal("url: %r");
-	if(fprint(cfd, "headers Authorization:%s", buf) < 0)
+	if(fprint(cfd, "request %s", hreq->method) < 0)
+		sysfatal("request: %r");
+	if(fprint(cfd, "headers Authorization:%s", hreq->authhdr) < 0)
 		sysfatal("headers2: %r");
-	if(fprint(cfd, "headers x-amz-date:%s\nx-amz-content-sha256:%.*lH", time, SHA2_256dlen, hash) < 0)
+	if(fprint(cfd, "headers x-amz-date:%s\nx-amz-content-sha256:%.*lH", hreq->time, SHA2_256dlen, hreq->payhash) < 0)
 		sysfatal("headers: %r");
+	if(hreq->mime[0] != 0 && fprint(cfd, "contenttype %s", hreq->mime) < 0)
+		sysfatal("contenttype: %r");
 }
 
 static void
@@ -110,11 +100,13 @@ download(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 	long n;
 	char buf[64];
 	char data[8192];
+	Hreq hreq;
 
 	fd = create(localpath, OWRITE, 0644);
 	if(fd < 0)
 		sysfatal("download create: %r");
-	prepdownload(s3, cfd, path);
+	mkhreq(&hreq, s3, "GET", path);
+	prep(s3, cfd, path, &hreq);
 	snprint(buf, sizeof buf, "/mnt/web/%s/body", conn);
 	bfd = open(buf, OREAD);
 	if(bfd < 0)
@@ -129,8 +121,8 @@ download(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 	}
 }
 
-static char*
-mimetype(char *path)
+static void
+mimetype(char *path, char *out, int nout)
 {
 	int p[2];
 	char buf[256];
@@ -152,22 +144,21 @@ mimetype(char *path)
 		if(n <= 0)
 			sysfatal("no mimetype found");
 		buf[n - 1] = 0;
-		return strdup(buf);
+		snprint(out, nout, "%s", buf);
 	}
 }
 
 static void
 upload(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 {
-	char *mime;
 	DigestState *ds;
-	uchar hash[SHA2_256dlen];
 	uchar data[8192];
 	long n;
 	int fd, bfd;
 	char buf[256];
+	Hreq hreq;
 
-	mime = mimetype(localpath);
+	mimetype(localpath, hreq.mime, sizeof hreq.mime);
 	fd = open(localpath, OREAD);
 	if(fd < 0)
 		sysfatal("upload open: %r");
@@ -179,10 +170,11 @@ upload(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 			break;
 		ds = sha2_256(data, n, nil, ds);
 	}
-	sha2_256(nil, 0, hash, ds);
+	sha2_256(nil, 0, hreq.payhash, ds);
 	seek(fd, 0, 0);
 
-	prepupload(s3, cfd, path, hash, mime);
+	mkhreq(&hreq, s3, "PUT", path);
+	prep(s3, cfd, path, &hreq);
 	snprint(buf, sizeof buf, "/mnt/web/%s/postbody", conn);
 	bfd = open(buf, OWRITE);
 	if(bfd < 0)
