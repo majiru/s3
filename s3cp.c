@@ -57,7 +57,7 @@ mkhreq(Hreq *hreq, S3 *s3, char *method, char *path)
 		snprint(buf, sizeof buf, "content-type:%s\nhost:%s\nx-amz-content-sha256:%.*lH\nx-amz-date:%s\n",
 			hreq->mime, s3->host, SHA2_256dlen, hreq->payhash, hreq->time);
 		sgndhdr = "content-type;host;x-amz-content-sha256;x-amz-date";
-	} else if(strcmp(method, "GET") == 0){
+	} else if(strcmp(method, "GET") == 0 || strcmp(method, "DELETE")==0){
 		hreq->mime[0] = 0;
 		sha2_256(nil, 0, hreq->payhash, nil);
 		snprint(buf, sizeof buf, "host:%s\nx-amz-date:%s\n", s3->host, hreq->time);
@@ -196,6 +196,22 @@ upload(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 	close(bfd);
 }
 
+static void
+delete(S3 *s3, char *path, char*, int cfd, char *conn)
+{
+	int fd;
+	char buf[256];
+	Hreq hreq;
+
+	mkhreq(&hreq, s3, "DELETE", path);
+	prep(s3, cfd, path, &hreq);
+	snprint(buf, sizeof buf, "/mnt/web/%s/body", conn);
+	fd = open(buf, OREAD);
+	if(fd < 0)
+		sysfatal("delete failed: %r");
+	close(fd);
+}
+
 _Noreturn static void
 usage(void)
 {
@@ -214,15 +230,22 @@ main(int argc , char **argv)
 	char buf[64];
 	char *p, *path, *localpath;
 	void (*op)(S3*,char*,char*,int,char*);
+	int rflag;
 
 	tmfmtinstall();
 	fmtinstall('H', encodefmt);
+	rflag = 0;
 	ARGBEGIN{
+	case 'r':
+		rflag++;
+		break;
 	default:
 		usage();
 		break;
 	}ARGEND
-	if(argc < 2)
+	if(rflag && argc < 1)
+		usage();
+	else if(!rflag && argc < 2)
 		usage();
 
 	s3.access = getenv("AWS_ACCESS_KEY_ID");
@@ -240,12 +263,17 @@ main(int argc , char **argv)
 	s3.host += 3;
 	
 	if(strstr(argv[0], "s3://")==argv[0]){
-		if(strstr(argv[1], "s3://")==argv[1])
-			sysfatal("s3:// → s3:// not implemented");
 		s3.bucket = strdup(argv[0]+5);
-		localpath = strdup(argv[1]);
-		op = download;
-	} else if(strstr(argv[1], "s3://")==argv[1]){
+		if(rflag){
+			op = delete;
+			localpath = nil;
+		} else {
+			if(strstr(argv[1], "s3://")==argv[1])
+				sysfatal("s3:// → s3:// not implemented");
+			localpath = strdup(argv[1]);
+			op = download;
+		}
+	} else if(!rflag && strstr(argv[1], "s3://")==argv[1]){
 		localpath = strdup(argv[0]);
 		s3.bucket = strdup(argv[1]+5);
 		op = upload;
