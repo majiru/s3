@@ -1,0 +1,15 @@
+Basics:
+	Requires $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY, and $AWS_ENDPOINT_URL_S3 defined
+	Usage: s3cp source s3://<bucket>/destination
+	Usage: s3cp s3://<bucket>/source destination
+
+Specifics/Bugs:
+	Uses webfs(4)
+	$AWS_DEFAULT_REGION is "auto" if not specified
+	Only basic upload/download, no multipart
+	Only AWS4-HMAC-SHA256 support
+	Only tested against Cloudflare R2
+	No direct s3:// → s3://
+	A fs would be better
+	This code sucks
+	No refunds
