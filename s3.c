@@ -279,16 +279,14 @@ static void
 list(S3 *s3, int cfd, char *conn, int argc, char **argv)
 {
 	int p[2];
-	Biobuf *in, *out;
+	Biobuf *b[2];
 	Xelem *x;
 	char path[512];
 
 	if(argc == 0)
 		usage();
-	if(parseuri(s3, path, sizeof path, argv[0]) < 0){
-		fprint(2, "parseuri failed\n");
+	if(parseuri(s3, path, sizeof path, argv[0]) < 0)
 		usage();
-	}
 	if(pipe(p) < 0)
 		sysfatal("pipe: %r");
 	switch(fork()){
@@ -296,27 +294,26 @@ list(S3 *s3, int cfd, char *conn, int argc, char **argv)
 		sysfatal("fork: %r");
 	case 0:
 		close(p[1]);
-		in = Bfdopen(p[0], OWRITE);
-		if(in == nil)
+		b[0] = Bfdopen(p[0], OWRITE);
+		if(b[0] == nil)
 			sysfatal("Bfdopen: %r");
-		download(s3, cfd, conn, path, in);
+		download(s3, cfd, conn, path, b[0]);
 		exits(nil);
 	default:
 		close(p[0]);
 		break;
 	}
-	out = Bfdopen(p[1], OREAD);
-	if(out == nil)
+	b[1] = Bfdopen(p[1], OREAD);
+	if(b[1] == nil)
 		sysfatal("Bfdopen: %r");
-	x = xmlread(out, 0);
+	x = xmlread(b[1], 0);
 	if(x == nil)
 		sysfatal("file was not valid XML, maybe not a prefix?");
 	if((x = xmlget(x, "Contents", nil)) == nil)
 		sysfatal("xml did not have Contents field");
 
-	for(; x != nil && xmlget(x, "Key", nil) != nil; x = x->next){
+	for(; x != nil && xmlget(x, "Key", nil) != nil; x = x->next)
 		print("%s\n", xmlget(x, "Key", nil)->v);
-	}
 }
 
 struct {
