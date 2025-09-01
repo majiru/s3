@@ -2,6 +2,8 @@
 
 BIN=$home/bin/$objtype
 
+TARG=s3
+
 OFILES=\
 	xml.$O\
 	s3.$O\
