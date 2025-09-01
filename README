@@ -1,7 +1,10 @@
 Basics:
 	Requires $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY, and $AWS_ENDPOINT_URL_S3 defined
-	Usage: s3cp source s3://<bucket>/destination
-	Usage: s3cp s3://<bucket>/source destination
+	Usage: 6.out cat s3://bucket/file
+	Usage: 6.out cp source s3://bucket/destination
+	Usage: 6.out cp s3://bucket/source <destination>
+	Usage: 6.out rm s3://bucket/path
+	Usage: 6.out ls s3://bucket/prefix
 
 Specifics/Bugs:
 	Uses webfs(4)

@@ -1,7 +1,12 @@
 </$objtype/mkfile
 
 BIN=$home/bin/$objtype
-TARG=\
-	s3cp\
 
-</sys/src/cmd/mkmany
+OFILES=\
+	xml.$O\
+	s3.$O\
+
+HFILES=\
+	xml.h\
+
+</sys/src/cmd/mkone

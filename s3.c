@@ -1,7 +1,9 @@
 #include <u.h>
 #include <libc.h>
+#include <bio.h>
 #include <mp.h>
 #include <libsec.h>
+#include "xml.h"
 
 typedef struct {
 	char *endpoint;
@@ -94,17 +96,14 @@ prep(S3 *s3, int cfd, char *path, Hreq *hreq)
 }
 
 static void
-download(S3 *s3, char *path, char *localpath, int cfd, char *conn)
+download(S3 *s3, int cfd, char *conn, char *path, Biobuf *local)
 {
-	int fd, bfd;
+	int bfd;
 	long n;
 	char buf[64];
 	char data[8192];
 	Hreq hreq;
 
-	fd = create(localpath, OWRITE, 0644);
-	if(fd < 0)
-		sysfatal("download create: %r");
 	mkhreq(&hreq, s3, "GET", path);
 	prep(s3, cfd, path, &hreq);
 	snprint(buf, sizeof buf, "/mnt/web/%s/body", conn);
@@ -117,7 +116,7 @@ download(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 			sysfatal("download body: %r");
 		if(n == 0)
 			return;
-		write(fd, data, n);
+		Bwrite(local, data, n);
 	}
 }
 
@@ -149,7 +148,7 @@ mimetype(char *path, char *out, int nout)
 }
 
 static void
-upload(S3 *s3, char *path, char *localpath, int cfd, char *conn)
+upload(S3 *s3, int cfd, char *conn, char *localpath, char *remotepath)
 {
 	DigestState *ds;
 	uchar data[8192];
@@ -173,8 +172,8 @@ upload(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 	sha2_256(nil, 0, hreq.payhash, ds);
 	seek(fd, 0, 0);
 
-	mkhreq(&hreq, s3, "PUT", path);
-	prep(s3, cfd, path, &hreq);
+	mkhreq(&hreq, s3, "PUT", remotepath);
+	prep(s3, cfd, remotepath, &hreq);
 	snprint(buf, sizeof buf, "/mnt/web/%s/postbody", conn);
 	bfd = open(buf, OWRITE);
 	if(bfd < 0)
@@ -196,13 +195,77 @@ upload(S3 *s3, char *path, char *localpath, int cfd, char *conn)
 	close(bfd);
 }
 
+static int
+parseuri(S3 *s3, char *path, int npath, char *arg)
+{
+	char *p;
+
+	if(strstr(arg, "s3://") != arg)
+		return -1;
+	arg+=5;
+	p = strchr(arg, '/');
+	if(p == nil || p == arg)
+		return -1;
+	snprint(path, npath, "%s", p+1);
+	s3->bucket = strdup(arg);
+	s3->bucket[p-arg] = 0;
+	return 0;
+}
+
+_Noreturn static void
+usage(void)
+{
+	fprint(2, "Requires $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY, and $AWS_ENDPOINT_URL_S3 defined\n");
+	fprint(2, "Usage: %s cat s3://bucket/file\n", argv0);
+	fprint(2, "Usage: %s cp source s3://bucket/destination\n", argv0);
+	fprint(2, "Usage: %s cp s3://bucket/source <destination>\n", argv0);
+	fprint(2, "Usage: %s rm s3://bucket/path\n", argv0);
+	fprint(2, "Usage: %s ls s3://bucket/prefix\n", argv0);
+	exits("usage");
+}
+
 static void
-delete(S3 *s3, char *path, char*, int cfd, char *conn)
+cp(S3 *s3, int cfd, char *conn, int argc, char **argv)
+{
+	char path[512];
+	Biobuf *b;
+	int fd;
+
+	if(argc == 0 || argc > 2)
+		usage();
+	if(parseuri(s3, path, sizeof path, argv[0]) == 0){
+		if(argc > 1 && parseuri(s3, path, sizeof path, argv[1]) == 0)
+			sysfatal("s3:// → s3:// is not implemented");
+		if(argc == 1)
+			fd = 1;
+		else {
+			fd = create(argv[1], OWRITE, 0644);
+			if(fd < 0)
+				sysfatal("create: %r");
+		}
+		b = Bfdopen(fd, OWRITE);
+		if(b == nil)
+			sysfatal("Bfdopen: %r");
+		download(s3, cfd, conn, path, b);
+		return;
+	}
+	if(argc == 1 || parseuri(s3, path, sizeof path, argv[1]) < 0)
+		usage();
+	upload(s3, cfd, conn, argv[0], path);
+}
+
+static void
+delete(S3 *s3, int cfd, char *conn, int argc, char **argv)
 {
 	int fd;
 	char buf[256];
 	Hreq hreq;
+	char path[512];
 
+	if(argc == 0)
+		usage();
+	if(parseuri(s3, path, sizeof path, argv[0]) < 0)
+		usage();
 	mkhreq(&hreq, s3, "DELETE", path);
 	prep(s3, cfd, path, &hreq);
 	snprint(buf, sizeof buf, "/mnt/web/%s/body", conn);
@@ -212,40 +275,77 @@ delete(S3 *s3, char *path, char*, int cfd, char *conn)
 	close(fd);
 }
 
-_Noreturn static void
-usage(void)
+static void
+list(S3 *s3, int cfd, char *conn, int argc, char **argv)
 {
-	fprint(2, "Requires $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY, and $AWS_ENDPOINT_URL_S3 defined\n");
-	fprint(2, "Usage: %s source s3://<bucket>/destination\n", argv0);
-	fprint(2, "Usage: %s s3://<bucket>/source destination\n", argv0);
-	exits("usage");
+	int p[2];
+	Biobuf *in, *out;
+	Xelem *x;
+	char path[512];
+
+	if(argc == 0)
+		usage();
+	if(parseuri(s3, path, sizeof path, argv[0]) < 0){
+		fprint(2, "parseuri failed\n");
+		usage();
+	}
+	if(pipe(p) < 0)
+		sysfatal("pipe: %r");
+	switch(fork()){
+	case -1:
+		sysfatal("fork: %r");
+	case 0:
+		close(p[1]);
+		in = Bfdopen(p[0], OWRITE);
+		if(in == nil)
+			sysfatal("Bfdopen: %r");
+		download(s3, cfd, conn, path, in);
+		exits(nil);
+	default:
+		close(p[0]);
+		break;
+	}
+	out = Bfdopen(p[1], OREAD);
+	if(out == nil)
+		sysfatal("Bfdopen: %r");
+	x = xmlread(out, 0);
+	if(x == nil)
+		sysfatal("file was not valid XML, maybe not a prefix?");
+	if((x = xmlget(x, "Contents", nil)) == nil)
+		sysfatal("xml did not have Contents field");
+
+	for(; x != nil && xmlget(x, "Key", nil) != nil; x = x->next){
+		print("%s\n", xmlget(x, "Key", nil)->v);
+	}
 }
+
+struct {
+	char *cmd;
+	void (*fn)(S3*,int,char*,int,char**);
+} cmdtab[] = {
+	{ "cp", cp },
+	{ "cat", cp },
+	{ "rm", delete },
+	{ "ls", list },
+};
 
 void
 main(int argc , char **argv)
 {
 	S3 s3;
 	int fd;
+	int i;
 	long n;
 	char buf[64];
-	char *p, *path, *localpath;
-	void (*op)(S3*,char*,char*,int,char*);
-	int rflag;
 
 	tmfmtinstall();
 	fmtinstall('H', encodefmt);
-	rflag = 0;
 	ARGBEGIN{
-	case 'r':
-		rflag++;
-		break;
 	default:
 		usage();
 		break;
 	}ARGEND
-	if(rflag && argc < 1)
-		usage();
-	else if(!rflag && argc < 2)
+	if(argc == 0)
 		usage();
 
 	s3.access = getenv("AWS_ACCESS_KEY_ID");
@@ -261,30 +361,6 @@ main(int argc , char **argv)
 	if(s3.host == nil)
 		sysfatal("invalid endpoint url");
 	s3.host += 3;
-	
-	if(strstr(argv[0], "s3://")==argv[0]){
-		s3.bucket = strdup(argv[0]+5);
-		if(rflag){
-			op = delete;
-			localpath = nil;
-		} else {
-			if(strstr(argv[1], "s3://")==argv[1])
-				sysfatal("s3:// → s3:// not implemented");
-			localpath = strdup(argv[1]);
-			op = download;
-		}
-	} else if(!rflag && strstr(argv[1], "s3://")==argv[1]){
-		localpath = strdup(argv[0]);
-		s3.bucket = strdup(argv[1]+5);
-		op = upload;
-	} else
-		usage();
-
-	p = strchr(s3.bucket, '/');
-	if(p == nil)
-		sysfatal("no path provided within bucket");
-	*p = 0;
-	path = p+1;
 
 	fd = open("/mnt/web/clone", ORDWR);
 	if(fd < 0)
@@ -294,6 +370,13 @@ main(int argc , char **argv)
 		sysfatal("read: %r");
 	buf[n-1] = 0;
 
-	op(&s3, path, localpath, fd, buf);
-	exits(nil);
+	for(i = 0; i < nelem(cmdtab); i++){
+		if(strcmp(argv[0], cmdtab[i].cmd) != 0)
+			continue;
+		argv++;
+		argc--;
+		cmdtab[i].fn(&s3, fd, buf, argc, argv);
+		exits(nil);
+	}
+	sysfatal("unsupported cmd: %s", argv[0]);
 }
