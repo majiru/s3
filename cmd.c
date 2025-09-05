@@ -3,13 +3,13 @@
 #include <bio.h>
 #include <mp.h>
 #include <libsec.h>
+#include <auth.h>
 #include "xml.h"
 
 typedef struct {
 	char *endpoint;
 	char *host;
 	char *access;
-	char *secret;
 	char *bucket;
 	char *region;
 } S3;
@@ -32,18 +32,31 @@ datetime(char *date, int ndate, char *time, int ntime)
 	snprint(time, ntime, "%sT%τZ", date, tmfmt(&t, "hhmmss"));
 }
 
-#define hmac(data, dlen, key, klen, digest) hmac_sha2_256(data, dlen, key, klen, digest, nil)
-
 static void
-mkkey(char *key, char *date, char *region, char *service, uchar out[SHA2_256dlen])
+getkey(char *date, char *region, char *service, uchar out[SHA2_256dlen])
 {
+	int fd;
+	AuthRpc *rpc;
 	char buf[256];
+	int n;
+	char keyspec[] = "proto=aws4";
 
-	snprint(buf, sizeof buf, "AWS4%s", key);
-	hmac((uchar*)date, strlen(date), (uchar*)buf, strlen(buf), out);
-	hmac((uchar*)region, strlen(region), out, SHA2_256dlen, (uchar*)buf);
-	hmac((uchar*)service, strlen(service), (uchar*)buf, SHA2_256dlen, out);
-	hmac((uchar*)"aws4_request", 12, out, SHA2_256dlen, out);
+	fd = open("/mnt/factotum/rpc", ORDWR);
+	if(fd < 0)
+		sysfatal("factotum rpc open: %r");
+	rpc = auth_allocrpc(fd);
+	if(auth_rpc(rpc, "start", keyspec, strlen(keyspec)) != ARok)
+		sysfatal("auth_rpc: %r");
+	n = snprint(buf, sizeof buf, "%s %s %s", date, region, service);
+	if(auth_rpc(rpc, "write", buf, n) != ARok)
+		sysfatal("auth_rpc: %r");
+	if(auth_rpc(rpc, "read", nil, 0) != ARok)
+		sysfatal("auth_rpc: %r");
+	if(rpc->narg != SHA2_256dlen)
+		sysfatal("invalid auth_rpc output");
+	memcpy(out, rpc->arg, SHA2_256dlen);
+	auth_freerpc(rpc);
+	close(fd);
 }
 
 static void
@@ -72,8 +85,8 @@ mkhreq(Hreq *hreq, S3 *s3, char *method, char *path)
 	sha2_256((uchar*)req, strlen(req), key, nil);
 	snprint(buf, sizeof buf, "%s\n%s\n%s/%s/%s/aws4_request\n%.*lH",
 		"AWS4-HMAC-SHA256", hreq->time, date, s3->region, "s3", SHA2_256dlen, key);
-	mkkey(s3->secret, date, s3->region, "s3", key);
-	hmac((uchar*)buf, strlen(buf), key, SHA2_256dlen, sig);
+	getkey(date, s3->region, "s3", key);
+	hmac_sha2_256((uchar*)buf, strlen(buf), key, SHA2_256dlen, sig, nil);
 
 	snprint(hreq->authhdr, sizeof hreq->authhdr, "%s Credential=%s/%s/%s/%s/aws4_request, SignedHeaders=%s, Signature=%.*lH",
 		"AWS4-HMAC-SHA256", s3->access, date, s3->region, "s3", sgndhdr, SHA2_256dlen, sig);
@@ -215,7 +228,7 @@ parseuri(S3 *s3, char *path, int npath, char *arg)
 _Noreturn static void
 usage(void)
 {
-	fprint(2, "Requires $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY, and $AWS_ENDPOINT_URL_S3 defined\n");
+	fprint(2, "Requires $AWS_ACCESS_KEY_ID and $AWS_ENDPOINT_URL_S3 defined\n");
 	fprint(2, "Usage: %s cat s3://bucket/file\n", argv0);
 	fprint(2, "Usage: %s cp source s3://bucket/destination\n", argv0);
 	fprint(2, "Usage: %s cp s3://bucket/source <destination>\n", argv0);
@@ -346,10 +359,9 @@ main(int argc , char **argv)
 		usage();
 
 	s3.access = getenv("AWS_ACCESS_KEY_ID");
-	s3.secret = getenv("AWS_SECRET_ACCESS_KEY");
 	s3.endpoint = getenv("AWS_ENDPOINT_URL_S3");
 	s3.region = getenv("AWS_DEFAULT_REGION");
-	if(s3.access == nil || s3.secret == nil || s3.endpoint == nil)
+	if(s3.access == nil || s3.endpoint == nil)
 		usage();
 	if(s3.region == nil)
 		s3.region = "auto";

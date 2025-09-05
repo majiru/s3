@@ -1,0 +1,6 @@
+</$objtype/mkfile
+
+TEST=\
+	factotum
+
+</sys/src/cmd/mktest

@@ -1,10 +1,10 @@
 Basics:
-	Requires $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY, and $AWS_ENDPOINT_URL_S3 defined
-	Usage: s3 cat s3://bucket/file
-	Usage: s3 cp source s3://bucket/destination
-	Usage: s3 cp s3://bucket/source <destination>
-	Usage: s3 rm s3://bucket/path
-	Usage: s3 ls s3://bucket/prefix
+	Requires $AWS_ACCESS_KEY_ID and $AWS_ENDPOINT_URL_S3 defined
+	Usage: s3/cmd cat s3://bucket/file
+	Usage: s3/cmd cp source s3://bucket/destination
+	Usage: s3/cmd cp s3://bucket/source <destination>
+	Usage: s3/cmd rm s3://bucket/path
+	Usage: s3/cmd ls s3://bucket/prefix
 
 Specifics/Bugs:
 	Uses webfs(4)

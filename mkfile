@@ -1,14 +1,15 @@
 </$objtype/mkfile
 
-BIN=$home/bin/$objtype
+BIN=$home/bin/$objtype/s3
 
-TARG=s3
+TARG=\
+	cmd\
+	factotum\
 
 OFILES=\
 	xml.$O\
-	s3.$O\
 
 HFILES=\
 	xml.h\
 
-</sys/src/cmd/mkone
+</sys/src/cmd/mkmany
