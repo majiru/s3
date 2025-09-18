@@ -232,6 +232,7 @@ fsread(Req *r)
 			respond(r, "error read without a rpc verb write first");
 			break;
 		}
+		/* more of a pipe... */
 		r->ifcall.offset = 0;
 		readbuf(r, x->msg, x->nmsg);
 		respond(r, nil);
@@ -335,6 +336,29 @@ Srv fs = {
 .destroyfid=fsclose,
 };
 
+/* copied from auth/factotum */
+/* don't allow other processes to debug us and steal keys */
+static void
+private(void)
+{
+	int fd;
+	char buf[32];
+	static char pmsg[] = "Warning! %s can't protect itself from debugging: %r\n";
+	static char smsg[] = "Warning! %s can't turn off swapping: %r\n";
+
+	snprint(buf, sizeof(buf), "/proc/%d/ctl", getpid());
+	fd = open(buf, OWRITE|OCEXEC);
+	if(fd < 0){
+		fprint(2, pmsg, argv0);
+		return;
+	}
+	if(fprint(fd, "private") < 0)
+		fprint(2, pmsg, argv0);
+	if(fprint(fd, "noswap") < 0)
+		fprint(2, smsg, argv0);
+	close(fd);
+}
+
 _Noreturn static void
 usage(void)
 {
@@ -346,9 +370,11 @@ void
 main(int argc, char **argv)
 {
 	char *srv, *mntpt;
+	int doprivate;
 
 	srv = nil;
 	mntpt = "/mnt/factotum";
+	doprivate = 1;
 	ARGBEGIN{
 	case 'D':
 		chatty9p++;
@@ -359,9 +385,14 @@ main(int argc, char **argv)
 	case 'm':
 		mntpt = EARGF(usage());
 		break;
+	case 'p':
+		doprivate = 0;
+		break;
 	default:
 		usage();
 	}ARGEND
+	if(doprivate)
+		private();
 
 	user = getenv("user");
 	if(user == nil)
