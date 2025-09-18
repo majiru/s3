@@ -33,19 +33,19 @@ datetime(char *date, int ndate, char *time, int ntime)
 }
 
 static void
-getkey(char *date, char *region, char *service, uchar out[SHA2_256dlen])
+getkey(char *date, char *region, char *service, char *access, uchar out[SHA2_256dlen])
 {
 	int fd;
 	AuthRpc *rpc;
 	char buf[256];
 	int n;
-	char keyspec[] = "proto=aws4";
 
 	fd = open("/mnt/factotum/rpc", ORDWR);
 	if(fd < 0)
 		sysfatal("factotum rpc open: %r");
 	rpc = auth_allocrpc(fd);
-	if(auth_rpc(rpc, "start", keyspec, strlen(keyspec)) != ARok)
+	n = snprint(buf, sizeof buf, "proto=aws4 access=%s", access);
+	if(auth_rpc(rpc, "start", buf, n) != ARok)
 		sysfatal("auth_rpc: %r");
 	n = snprint(buf, sizeof buf, "%s %s %s", date, region, service);
 	if(auth_rpc(rpc, "write", buf, n) != ARok)
@@ -85,7 +85,7 @@ mkhreq(Hreq *hreq, S3 *s3, char *method, char *path)
 	sha2_256((uchar*)req, strlen(req), key, nil);
 	snprint(buf, sizeof buf, "%s\n%s\n%s/%s/%s/aws4_request\n%.*lH",
 		"AWS4-HMAC-SHA256", hreq->time, date, s3->region, "s3", SHA2_256dlen, key);
-	getkey(date, s3->region, "s3", key);
+	getkey(date, s3->region, "s3", s3->access, key);
 	hmac_sha2_256((uchar*)buf, strlen(buf), key, SHA2_256dlen, sig, nil);
 
 	snprint(hreq->authhdr, sizeof hreq->authhdr, "%s Credential=%s/%s/%s/%s/aws4_request, SignedHeaders=%s, Signature=%.*lH",

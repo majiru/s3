@@ -8,7 +8,86 @@
 #include <libsec.h>
 
 static char *user;
-static Attr *creds;
+static Attr *keyring[32];
+
+static Attr*
+findkey(char *key, char *value)
+{
+	int i;
+	char *p;
+
+	for(i = 0; i < nelem(keyring); i++){
+		if(keyring[i] == nil)
+			continue;
+		if((p = _strfindattr(keyring[i], key)) == nil)
+			continue;
+		if(strcmp(p, value) != 0)
+			continue;
+		return keyring[i];
+	}
+	return nil;
+}
+
+static char*
+setkey(char *key, char *value, Attr *new)
+{
+	int i;
+	Attr **empty;
+	char *p;
+
+	empty = nil;
+	for(i = 0; i < nelem(keyring); i++){
+		if(empty == nil && keyring[i] == nil)
+			empty = &keyring[i];
+		if((p = _strfindattr(keyring[i], key)) == nil)
+			continue;
+		if(strcmp(p, value) != 0)
+			continue;
+		_freeattr(keyring[i]);
+		keyring[i] = _copyattr(new);
+		return nil;
+	}
+	if(empty == nil)
+		return "keyring full";
+	*empty = _copyattr(new);
+	return nil;
+}
+
+static char*
+delkey(char *key, char *value)
+{
+	int i;
+	char *p;
+
+	for(i = 0; i < nelem(keyring); i++){
+		if(keyring[i] == nil)
+			continue;
+		if((p = _strfindattr(keyring[i], key)) == nil)
+			continue;
+		if(strcmp(p, value) != 0)
+			continue;
+		_freeattr(keyring[i]);
+		keyring[i] = nil;
+		return nil;
+	}
+	return "no such key";
+}
+
+static long
+dumpkey(char *buf, long n)
+{
+	int i;
+	char *e, *p;
+
+	e = buf + n;
+	p = buf;
+	for(i = 0; i < nelem(keyring); i++){
+		if(keyring[i] == nil)
+			continue;
+		p = seprint(p, e, "%A\n", keyring[i]);
+	}
+	return p - buf;
+}
 
 enum {
 	Sneedparam,
@@ -18,6 +97,7 @@ enum {
 typedef struct State State;
 struct State {
 	uchar buf[SHA2_256dlen];
+	Attr *creds;
 	uint phase;
 };
 
@@ -42,7 +122,7 @@ aws4write(State *s, char *v, uint l)
 			return ARerror;
 		}
 		/* All lights are green */
-		snprint(buf, sizeof buf, "AWS4%s", _strfindattr(creds, "!secret"));
+		snprint(buf, sizeof buf, "AWS4%s", _strfindattr(s->creds, "!secret"));
 		hmac_sha2_256((uchar*)args[0], strlen(args[0]), (uchar*)buf, strlen(buf), s->buf, nil);
 		hmac_sha2_256((uchar*)args[1], strlen(args[1]), s->buf, SHA2_256dlen, (uchar*)buf, nil);
 		hmac_sha2_256((uchar*)args[2], strlen(args[2]), (uchar*)buf, SHA2_256dlen, s->buf, nil);
@@ -100,7 +180,7 @@ attrfmt(Fmt *fmt)
 		case AttrNameval:
 		case AttrDefault:
 			if(a->name[0] == '!')
-				fmtprint(fmt, first+" %q", a->name);
+				fmtprint(fmt, first+" %q=", a->name);
 			else
 				fmtprint(fmt, first+" %q=%q", a->name, a->val);
 			break;
@@ -212,7 +292,8 @@ static void
 fsread(Req *r)
 {
 	ulong path;
-	char buf[512];
+	char buf[1024];
+	long n;
 	Xfid *x;
 
 	path = r->fid->qid.path;
@@ -222,8 +303,8 @@ fsread(Req *r)
 		respond(r, nil);
 		break;
 	case Qctl:
-		snprint(buf, sizeof buf, "%A\n", creds);
-		readstr(r, buf);
+		n = dumpkey(buf, sizeof buf);
+		readbuf(r, buf, n);
 		respond(r, nil);
 		break;
 	case Qrpc:
@@ -249,29 +330,40 @@ fswrite(Req *r)
 {
 	ulong path;
 	char buf[512];
-	char *proto;
+	char *p;
 	Xfid *x;
 	uint res;
 	char outbuf[512];
 	uint noutbuf;
+	Attr *new, *k;
 
 	path = r->fid->qid.path;
 	r->ofcall.count = snprint(buf, sizeof buf, "%.*s", r->ifcall.count, r->ifcall.data);
 	switch(path){
 	case Qctl:
 		if(strncmp(buf, "key ", 4) == 0){
-			_freeattr(creds);
-			creds = _parseattr(buf+4);
-			if((proto = _strfindattr(creds, "proto")) == nil || strcmp(proto, "aws4") != 0)
+			new = _parseattr(buf+4);
+			if((p = _strfindattr(new, "proto")) == nil || strcmp(p, "aws4") != 0)
 				respond(r, "proto!=aws4");
-			else
-				respond(r, nil);
-		} else if(strncmp(buf, "delkey", 6) == 0){
-			_freeattr(creds);
-			creds = nil;
-			respond(r, nil);
-		} else
+			else if((p = _strfindattr(new, "!secret")) == nil || strlen(p) == 0)
+				respond(r, "no !secret=");
+			else if((p = _strfindattr(new, "access")) == nil || strlen(p) == 0)
+				respond(r, "no access=");
+			else {
+				respond(r, setkey("access", p, new));
+				_freeattr(new);
+			}
+		} else if(strncmp(buf, "delkey ", 7) == 0){
+			new = _parseattr(buf+7);
+			p = _strfindattr(new, "access");
+			if(p == nil || strlen(p) == 0){
+				respond(r, "access= not specified");
+				return;
+			}
+			respond(r, delkey("access", p));
+		} else {
 			respond(r, "unknown ctl msg");
+		}
 		memset(buf, 0, sizeof buf);
 		break;
 	case Qrpc:
@@ -280,9 +372,20 @@ fswrite(Req *r)
 			respond(r, "error write while there's data for you to read");
 			return;
 		}
-		if(strncmp(buf, "start", 5) == 0)
-			res = ARok;
-		else if(strncmp(buf, "write ", 6) == 0)
+		if(strncmp(buf, "start ", 6) == 0){
+			new = _parseattr(buf+6);
+			p = _strfindattr(new, "access");
+			if(p == nil || strlen(p) == 0){
+				werrstr("%s", "no access=");
+				res = ARerror;
+			} else if((k = findkey("access", p)) == nil){
+				werrstr("%s", "can not find matching key");
+				res = ARerror;
+			} else {
+				x->proto.creds = k;
+				res = ARok;
+			}
+		} else if(strncmp(buf, "write ", 6) == 0)
 			res = aws4write(&x->proto, buf+6, r->ifcall.count-6);
 		else if(strncmp(buf, "read", 4) == 0){
 			noutbuf = sizeof outbuf;

@@ -49,7 +49,8 @@ main(int,char**)
 	fd = open("/mnt/factotum/ctl", OWRITE);
 	if(fd < 0)
 		sysfatal("open: %r");
-	fprint(fd, "key proto=aws4 !secret=blah");
+	if(fprint(fd, "key proto=aws4 !secret=blah access=myid") < 0)
+		sysfatal("key write: %r");
 	close(fd);
 
 	fd = open("/mnt/factotum/rpc", ORDWR);
@@ -57,7 +58,7 @@ main(int,char**)
 		sysfatal("open: %r");
 
 	rpc = auth_allocrpc(fd);
-	ret = auth_rpc(rpc, "start", "proto=aws4", strlen("proto=aws4"));
+	ret = auth_rpc(rpc, "start", "proto=aws4 access=myid", strlen("proto=aws4 access=myid"));
 	if(ret != ARok)
 		sysfatal("start: %r");
 
