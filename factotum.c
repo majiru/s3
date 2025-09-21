@@ -462,7 +462,7 @@ private(void)
 	close(fd);
 }
 
-_Noreturn static void
+_Noreturn void
 usage(void)
 {
 	fprint(2, "Usage: %s [-D] [-s srv] [-m mntpt]\n", argv0);
