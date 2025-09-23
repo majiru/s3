@@ -42,7 +42,8 @@ main(int argc , char **argv)
 		b[0] = Bfdopen(p[0], OWRITE);
 		if(b[0] == nil)
 			sysfatal("Bfdopen: %r");
-		download(&s3, path, b[0]);
+		download(&s3, path, b[0], s3get);
+		Bterm(b[0]);
 		exits(nil);
 	default:
 		close(p[0]);

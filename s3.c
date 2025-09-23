@@ -9,7 +9,8 @@
 typedef struct {
 	uchar *payhash;
 	char *mime;
-	char method[16];
+	char *path;
+	char *method;
 	char time[128];
 	char authhdr[512];
 } Hreq;
@@ -52,28 +53,47 @@ getkey(char *date, char *region, char *service, char *access, uchar out[SHA2_256
 }
 
 static void
-mkhreq(Hreq *hreq, S3 *s3, char *method, char *path)
+mkreq(Hreq *hreq, char *method, char *path, uchar *payhash, char *mime)
+{
+	hreq->method = method;
+	hreq->path = path;
+	hreq->payhash = payhash;
+	hreq->mime = mime;
+}
+
+static void
+signreq(Hreq *hreq, S3 *s3)
 {
 	char date[64];
 	uchar key[SHA2_256dlen], sig[SHA2_256dlen];
-	char buf[512], req[512];
+	char buf[1024], buf2[1024], req[1024];
 	char *sgndhdr;
+	char *query;
 
 	datetime(date, sizeof date, hreq->time, sizeof hreq->time);
-	if(strcmp(method, "PUT") == 0){
+	if(strcmp(hreq->method, "POST") == 0){
 		snprint(buf, sizeof buf, "content-type:%s\nhost:%s\nx-amz-content-sha256:%.*lH\nx-amz-date:%s\n",
 			hreq->mime, s3->host, SHA2_256dlen, hreq->payhash, hreq->time);
 		sgndhdr = "content-type;host;x-amz-content-sha256;x-amz-date";
-	} else if(strcmp(method, "GET") == 0 || strcmp(method, "DELETE")==0){
-		hreq->mime = nil;
+	} else if(strcmp(hreq->method, "PUT") == 0){
+		snprint(buf, sizeof buf, "content-type:%s\nhost:%s\nx-amz-content-sha256:%.*lH\nx-amz-date:%s\n",
+			hreq->mime, s3->host, SHA2_256dlen, hreq->payhash, hreq->time);
+		sgndhdr = "content-type;host;x-amz-content-sha256;x-amz-date";
+	} else if(strcmp(hreq->method, "GET") == 0 || strcmp(hreq->method, "DELETE")==0 || strcmp(hreq->method, "POST") == 0){
 		sha2_256(nil, 0, hreq->payhash, nil);
 		snprint(buf, sizeof buf, "host:%s\nx-amz-date:%s\n", s3->host, hreq->time);
 		sgndhdr = "host;x-amz-date";
 	} else
 		sysfatal("invalid method");
 
+	snprint(buf2, sizeof buf2, "%s", hreq->path);
+	if((query = strchr(buf2, '?')) != nil){
+		*query = '\0';
+		query++;
+	} else
+		query = "";
 	snprint(req, sizeof req, "%s\n/%s/%s\n%s\n%s\n%s\n%.*lH",
-		method, s3->bucket, path, "", buf, sgndhdr, SHA2_256dlen, hreq->payhash);
+		hreq->method, s3->bucket, buf2, query, buf, sgndhdr, SHA2_256dlen, hreq->payhash);
 	sha2_256((uchar*)req, strlen(req), key, nil);
 	snprint(buf, sizeof buf, "%s\n%s\n%s/%s/%s/aws4_request\n%.*lH",
 		"AWS4-HMAC-SHA256", hreq->time, date, s3->region, "s3", SHA2_256dlen, key);
@@ -82,104 +102,168 @@ mkhreq(Hreq *hreq, S3 *s3, char *method, char *path)
 
 	snprint(hreq->authhdr, sizeof hreq->authhdr, "%s Credential=%s/%s/%s/%s/aws4_request, SignedHeaders=%s, Signature=%.*lH",
 		"AWS4-HMAC-SHA256", s3->access, date, s3->region, "s3", sgndhdr, SHA2_256dlen, sig);
-	snprint(hreq->method, sizeof hreq->method, "%s", method);
+}
+
+/* small fprint buffers bite us */
+#pragma	   varargck    argpos	   ctlprint 2
+static long
+ctlprint(int cfd, char *fmt, ...)
+{
+	char buf[2048];
+	char *e;
+	va_list arg;
+
+	va_start(arg, fmt);
+	e = vseprint(buf, buf + sizeof buf, fmt, arg);
+	va_end(arg);
+	return write(cfd, buf, e-buf);
 }
 
 static int
-prep(S3 *s3, int cfd, char *path, Hreq *hreq)
+prep(S3 *s3, int cfd, Hreq *hreq)
 {
-	if(fprint(cfd, "url %s/%s/%s", s3->endpoint, s3->bucket, path) < 0)
+	if(ctlprint(cfd, "url %s/%s/%s", s3->endpoint, s3->bucket, hreq->path) < 0)
 		return -1;
-	if(fprint(cfd, "request %s", hreq->method) < 0)
+	if(ctlprint(cfd, "request %s", hreq->method) < 0)
 		return -1;
-	if(fprint(cfd, "headers Authorization:%s", hreq->authhdr) < 0)
+	if(ctlprint(cfd, "headers Authorization:%s", hreq->authhdr) < 0)
 		return -1;
-	if(fprint(cfd, "headers x-amz-date:%s\nx-amz-content-sha256:%.*lH", hreq->time, SHA2_256dlen, hreq->payhash) < 0)
+	if(ctlprint(cfd, "headers x-amz-date:%s\nx-amz-content-sha256:%.*lH", hreq->time, SHA2_256dlen, hreq->payhash) < 0)
 		return -1;
-	if(hreq->mime != nil && fprint(cfd, "contenttype %s", hreq->mime) < 0)
+	if(hreq->mime != nil && ctlprint(cfd, "contenttype %s", hreq->mime) < 0)
 		return -1;
 	return 0;
 }
 
 static int
-wopen(char *buf, long n)
+hopen(Hcon *h, S3 *s3, int mode, Hreq *hreq)
 {
-	int fd;
+	long n;
+	char buf[64];
 
-	fd = open("/mnt/web/clone", ORDWR);
-	if(fd < 0)
-		return fd;
-	n = read(fd, buf, n - 1);
+	h->body = -1;
+	h->post = -1;
+	h->err = -1;
+	h->ctl = open("/mnt/web/clone", ORDWR);
+	if(h->ctl < 0)
+		return -1;
+
+	n = read(h->ctl, h->id, sizeof h->id - 1);
 	if(n <= 0){
+		close(h->ctl);
 		werrstr("short read from /mnt/web/clone");
 		return -1;
 	}
-	buf[n-1] = 0;
-	return fd;
+	h->id[n-1] = 0;
+
+	signreq(hreq, s3);
+	if(prep(s3, h->ctl, hreq) < 0){
+		close(h->ctl);
+		return -1;
+	}
+	switch(h->mode = mode){
+	case OREAD:
+		snprint(buf, sizeof buf, "/mnt/web/%s/body", h->id);
+		h->body = open(buf, OREAD);
+		if(h->body >= 0)
+			return 0;
+		snprint(buf, sizeof buf, "/mnt/web/%s/errorbody", h->id);
+		h->err = open(buf, OREAD);
+		return -1;
+	case ORDWR:
+	case OWRITE:
+		snprint(buf, sizeof buf, "/mnt/web/%s/postbody", h->id);
+		h->post = open(buf, OWRITE);
+		return 0;
+	default:
+		return -1;
+	}
+}
+
+void
+hclose(Hcon *h)
+{
+	if(h->ctl >= 0)
+		close(h->ctl);
+	if(h->body >= 0)
+		close(h->body);
+	if(h->post >= 0)
+		close(h->post);
+	if(h->err >= 0)
+		close(h->err);
 }
 
 int
-s3get(S3 *s3, char *path)
+hdone(Hcon *h)
 {
-	char id[64];
-	char body[64];
-	int fd, bfd;
+	char buf[64];
+
+	switch(h->mode){
+	case OWRITE:
+	case ORDWR:
+		close(h->post);
+		h->post = -1;
+		snprint(buf, sizeof buf, "/mnt/web/%s/body", h->id);
+		h->body = open(buf, OREAD);
+		if(h->body < 0){
+			snprint(buf, sizeof buf, "/mnt/web/%s/errorbody", h->id);
+			h->err = open(buf, OREAD);
+			return -1;
+		}
+		return 0;
+	default:
+		abort();
+	}
+}
+
+int
+s3get(S3 *s3, Hcon *con, char *path)
+{
 	Hreq h;
 	uchar payhash[SHA2_256dlen];
 
-	h.payhash = payhash;
-	fd = wopen(id, sizeof id);
-	if(fd < 0)
-		return -1;
-	mkhreq(&h, s3, "GET", path);
-	if(prep(s3, fd, path, &h) < 0)
-		return -1;
-	snprint(body, sizeof body, "/mnt/web/%s/body", id);
-	bfd = open(body, OREAD);
-	close(fd);
-	return bfd;
+	mkreq(&h, "GET", path, payhash, nil);
+	return hopen(con, s3, OREAD, &h);
 }
 
 int
-s3put(S3 *s3, char *path, char *mime, uchar *payhash)
+s3put(S3 *s3, Hcon *con, char *path, char *mime, uchar *payhash)
 {
-	char id[64];
-	char body[64];
-	int fd, bfd;
 	Hreq h;
 
-	h.mime = mime;
-	h.payhash = payhash;
-	fd = wopen(id, sizeof id);
-	if(fd < 0)
-		return -1;
-	mkhreq(&h, s3, "PUT", path);
-	if(prep(s3, fd, path, &h) < 0)
-		return -1;
-	snprint(body, sizeof body, "/mnt/web/%s/postbody", id);
-	bfd = open(body, OWRITE);
-	close(fd);
-	return bfd;
+	mkreq(&h, "PUT", path, payhash, mime);
+	return hopen(con, s3, ORDWR, &h);
 }
 
 int
-s3del(S3 *s3, char *path)
+s3del(S3 *s3, Hcon *con, char *path)
 {
-	char id[64];
-	char body[64];
-	int fd, bfd;
 	Hreq h;
 	uchar payhash[SHA2_256dlen];
 
-	h.payhash = payhash;
-	fd = wopen(id, sizeof id);
-	if(fd < 0)
+	mkreq(&h, "DELETE", path, payhash, nil);
+	return hopen(con, s3, OREAD, &h);
+}
+
+int
+s3post(S3 *s3, Hcon *con, char *path)
+{
+	Hreq h;
+	uchar payhash[SHA2_256dlen];
+
+	sha2_256(nil, 0, payhash, nil);
+	mkreq(&h, "POST", path, payhash, "application/octet-stream");
+	if(hopen(con, s3, ORDWR, &h) < 0)
 		return -1;
-	mkhreq(&h, s3, "DELETE", path);
-	if(prep(s3, fd, path, &h) < 0)
-		return -1;
-	snprint(body, sizeof body, "/mnt/web/%s/body", id);
-	bfd = open(body, OREAD);
-	close(fd);
-	return bfd;
+	
+	return hdone(con);
+}
+
+int
+s3postwrite(S3 *s3, Hcon *con, char *path, char *mime, uchar *payhash)
+{
+	Hreq h;
+
+	mkreq(&h, "POST", path, payhash, mime);
+	return hopen(con, s3, ORDWR, &h);
 }

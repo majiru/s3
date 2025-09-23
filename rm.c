@@ -16,8 +16,8 @@ main(int argc , char **argv)
 {
 	S3 s3;
 	int i;
-	int fd;
 	char path[512];
+	Hcon con;
 
 	tmfmtinstall();
 	fmtinstall('H', encodefmt);
@@ -29,9 +29,7 @@ main(int argc , char **argv)
 		usage();
 	if(parseuri(&s3, path, sizeof path, argv[0]) < 0)
 		usage();
-	fd = s3del(&s3, path);
-	if(fd < 0)
-		sysfatal("delete failed: %r");
-	close(fd);
+	if(s3del(&s3, &con, path) < 0)
+		sysfatal("could not buld request: %r");
 	exits(nil);
 }

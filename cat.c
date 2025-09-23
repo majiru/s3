@@ -30,7 +30,7 @@ main(int argc , char **argv)
 	if(parseuri(&s3, path, sizeof path, argv[0]) < 0)
 		usage();
 	b = Bfdopen(1, OWRITE);
-	download(&s3, path, b);
+	download(&s3, path, b, s3get);
 	Bterm(b);
 	exits(nil);
 }

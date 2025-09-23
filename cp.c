@@ -41,8 +41,9 @@ upload(S3 *s3, char *localpath, char *remotepath)
 	char mime[32];
 	uchar digest[SHA2_256dlen];
 	long n;
-	int fd, bfd;
+	int fd;
 	char buf[256];
+	Hcon con;
 
 	mimetype(localpath, mime, sizeof mime);
 	fd = open(localpath, OREAD);
@@ -59,8 +60,7 @@ upload(S3 *s3, char *localpath, char *remotepath)
 	sha2_256(nil, 0, digest, ds);
 	seek(fd, 0, 0);
 
-	bfd = s3put(s3, remotepath, mime, digest);
-	if(bfd < 0)
+	if(s3put(s3, &con, remotepath, mime, digest) < 0)
 		sysfatal("upload postbody open: %r");
 	for(;;){
 		n = read(fd, buf, sizeof buf);
@@ -68,10 +68,12 @@ upload(S3 *s3, char *localpath, char *remotepath)
 			sysfatal("file read: %r");
 		if(n == 0)
 			break;
-		if(write(bfd, buf, n) < 0)
+		if(write(con.post, buf, n) < 0)
 			sysfatal("upload write: %r");
 	}
-	close(bfd);
+	if(hdone(&con) < 0)
+		sysfatal("error response code: %r");
+	hclose(&con);
 }
 
 _Noreturn void
@@ -108,7 +110,7 @@ main(int argc , char **argv)
 		b = Bfdopen(fd, OWRITE);
 		if(b == nil)
 			sysfatal("Bfdopen: %r");
-		download(&s3, path, b);
+		download(&s3, path, b, s3get);
 		Bterm(b);
 		exits(nil);
 	}

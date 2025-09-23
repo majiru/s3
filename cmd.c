@@ -4,21 +4,22 @@
 #include "s3.h"
 
 void
-download(S3 *s3, char *path, Biobuf *local)
+download(S3 *s3, char *path, Biobuf *local, int (*fn)(S3*,Hcon*,char*))
 {
-	int bfd;
 	long n;
+	Hcon con;
 	char data[8192];
 
-	bfd = s3get(s3, path);
-	if(bfd < 0)
-		sysfatal("s3get: %r");
+	if(fn(s3, &con, path) < 0)
+		sysfatal("failed to create request: %r");
 	for(;;){
-		n = read(bfd, data, sizeof data);
+		n = read(con.body, data, sizeof data);
 		if(n < 0)
 			sysfatal("download body: %r");
-		if(n == 0)
+		if(n == 0){
+			hclose(&con);
 			return;
+		}
 		Bwrite(local, data, n);
 	}
 }
