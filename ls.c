@@ -54,7 +54,7 @@ main(int argc , char **argv)
 		sysfatal("Bfdopen: %r");
 	x = xmlread(b[1], 0);
 	if(x == nil)
-		sysfatal("file was not valid XML, maybe not a prefix?");
+		sysfatal("response was not valid XML, maybe not a prefix?");
 	if((x = xmlget(x, "Contents", nil)) == nil)
 		sysfatal("xml did not have Contents field");
 

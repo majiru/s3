@@ -10,7 +10,7 @@
 _Noreturn void
 usage(void)
 {
-	fprint(2, "Usage %s: s3://bucket/dir\n", argv0);
+	fprint(2, "Usage %s: [-l] s3://bucket/dir\n", argv0);
 	exits("usage");
 }
 
@@ -82,7 +82,7 @@ void
 main(int argc , char **argv)
 {
 	S3 s3;
-	int i, partno;
+	int lflag, partno;
 	char path[512];
 	int p[2];
 	Biobuf *b[2];
@@ -94,11 +94,15 @@ main(int argc , char **argv)
 	tmfmtinstall();
 	fmtinstall('H', encodefmt);
 	quotefmtinstall();
-	i = parseargs(&s3, argc, argv);
-	argc -= i;
-	argv += i;
+	parseargs(&s3, argc, argv);
+	lflag = 0;
+	ARGBEGIN{
+	case 'l':
+		lflag++;
+		break;
+	}ARGEND
 
-	if(argc == 0)
+	if(!lflag && argc == 0)
 		usage();
 	if(parseuri(&s3, path, sizeof path, argv[0]) < 0)
 		usage();
@@ -112,11 +116,10 @@ main(int argc , char **argv)
 		b[0] = Bfdopen(p[0], OWRITE);
 		if(b[0] == nil)
 			sysfatal("Bfdopen: %r");
-		download(&s3, smprint("%s?uploads=", path), b[0], s3post);
+		download(&s3, smprint("%s?uploads=", path), b[0], lflag ? s3get : s3post);
 		Bterm(b[0]);
 		exits(nil);
 	default:
-		waitpid();
 		close(p[0]);
 		break;
 	}
@@ -125,11 +128,15 @@ main(int argc , char **argv)
 		sysfatal("Bfdopen: %r");
 	x = xmlread(b[1], 0);
 	if(x == nil)
-		sysfatal("file was not valid XML, maybe not a prefix?");
+		sysfatal("response was not valid XML");
+	if(lflag){
+		x = xmlget(x, "Upload", nil);
+		for(; x != nil && xmlget(x, "UploadId", nil) != nil; x = x->next)
+			print("s3/rm 's3://%s/%s?uploadId=%s'\n", s3.bucket, xmlget(x, "Key", nil)->v, xmlget(x, "UploadId", nil)->v);
+		exits(nil);
+	}
 	if((x = xmlget(x, "UploadId", nil)) == nil)
 		sysfatal("xml did not have UploadId field");
-
-	/* print("%s\n", x->v); */
 
 	for(len = 0, partno = 1;;){
 		n = read(0, bb, sizeof bb - len);

@@ -30,6 +30,6 @@ main(int argc , char **argv)
 	if(parseuri(&s3, path, sizeof path, argv[0]) < 0)
 		usage();
 	if(s3del(&s3, &con, path) < 0)
-		sysfatal("could not buld request: %r");
+		sysfatal("could not build request: %r");
 	exits(nil);
 }
