@@ -1,0 +1,121 @@
+.TH s3 1
+.SH NAME
+s3/cat, s3/ls, s3/rm, s3/cp, s3/write, s3/factotum
+.SH SYNOPSIS
+.B s3/cat
+[
+.B -o
+.I offset
+]
+[
+.B -n
+.I count
+]
+.I s3://bucket/file
+.br
+.B s3/ls
+.I s3://bucket/prefix/
+.br
+.B s3/rm
+.I s3://bucket/file
+.br
+.B s3/cp
+file
+.I s3://bucket/destination
+.br
+.B s3/cp
+.I s3://bucket/source
+file
+.br
+.B s3/write
+.I s3://bucket/file
+.br
+.B s3/write
+.B -l
+.br
+s3/factotum
+[
+.B -p
+]
+[
+.B -s
+.I srvname
+]
+[
+.B -m
+.I mntpt
+]
+.SH DESCRIPTION
+These tools provide rudimentary access to data stored within s3 (or API compatible) buckets.
+The tools do little to paper over the realities of the s3 API, and mostly aim to map directly to
+different HTTP verbs where applicable.
+.PP
+.B s3/cat
+issues a GET request against the provided path and outputs the result to standard out.
+.PP
+.B s3/rm
+issues a DELETE request against the provided path.
+.PP
+.B s3/ls
+issues a GET request against the path, and attempts to parse the XML output as a directory listing.
+.PP
+.B s3/cp
+copies files to and from a s3 bucket.
+When conducting an upload an attempt is made to provide the correct mime type of the file through the use of
+.IR file (1).
+.PP
+.B s3/write
+reads standard input and uploads the content to a remote object chunks at a time using multipart uploads.
+S3 multipart uploads are a stateful interface, they must be created, referenced, then either aborted or completed.
+As such, it is feasible that one may wind up with zombie multipart uploads.
+The
+.B -l
+flag may be used to query the list of currently open multipart uploads.
+It prints out invocations of
+.B s3/rm
+that can be used to abort the upload.
+.SH "CREDENTIALS AND PARAMETERS"
+.B s3/factotum
+provides an overlay factotum for handling the signing of requests using the $AWS_SECRET_ACCESS_KEY.
+Each tool presents
+.B s3/factotum
+with the paramaters to sign, the secret access key is not directly retrievable after being stored.
+.B s3/factotum
+can store multiple sets of keys, and as such each secret access key must be provided with a paired
+access id for disambiguation. The following is an example of adding a key pair to
+.BR s3/factotum :
+.PP
+.EX
+% echo 'key proto=aws4 access=blah !secret=whatever' >/mnt/factotum/ctl
+.EE
+.PP
+.B s3/factotum
+by default mounts itself over top of
+.I /mnt/factotum
+and does not post itself to
+.IR /srv .
+This behavior may be changed with the
+.B -m
+and
+.B -s
+flags respectfully.
+.PP
+Each tool needs to be provided both the access key and the endpoint, and optionally a region.
+These parameters may be specified using either their standard environment variable names, or
+through command line flags.
+$AWS_ACCESS_KEY_ID and the
+.B -a
+flag may be used to specify the access id.
+$AWS_ENDPOINT_URL_S3 and the
+.B -u
+flag may be used to specify the endpoint url.
+$AWS_DEFAULT_REGION and the
+.B -r
+flag may be used to specify the region, defaulting to "auto" if not set.
+.SH "SEE ALSO"
+.IR webfs (4),
+.IR factotum (4)
+.SH BUGS
+Only AWS4-HMAC-SHA256 signatures are supported.
+Only tested against Cloudflare's R2™.
+No direct s3:// → s3:// copying.
