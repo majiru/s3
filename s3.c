@@ -13,6 +13,7 @@ typedef struct {
 	char *method;
 	char time[128];
 	char authhdr[512];
+	char *range;
 } Hreq;
 
 static void
@@ -59,6 +60,7 @@ mkreq(Hreq *hreq, char *method, char *path, uchar *payhash, char *mime)
 	hreq->path = path;
 	hreq->payhash = payhash;
 	hreq->mime = mime;
+	hreq->range = nil;
 }
 
 static void
@@ -131,6 +133,8 @@ prep(S3 *s3, int cfd, Hreq *hreq)
 	if(ctlprint(cfd, "headers x-amz-date:%s\nx-amz-content-sha256:%.*lH", hreq->time, SHA2_256dlen, hreq->payhash) < 0)
 		return -1;
 	if(hreq->mime != nil && ctlprint(cfd, "contenttype %s", hreq->mime) < 0)
+		return -1;
+	if(hreq->range != nil && ctlprint(cfd, "headers range: %s", hreq->range) < 0)
 		return -1;
 	return 0;
 }
@@ -223,6 +227,19 @@ s3get(S3 *s3, Hcon *con, char *path)
 	uchar payhash[SHA2_256dlen];
 
 	mkreq(&h, "GET", path, payhash, nil);
+	return hopen(con, s3, OREAD, &h);
+}
+
+int
+s3getrange(S3 *s3, Hcon *con, char *path, long off, long n)
+{
+	Hreq h;
+	uchar payhash[SHA2_256dlen];
+	char buf[64];
+
+	mkreq(&h, "GET", path, payhash, nil);
+	snprint(buf, sizeof buf, "bytes=%ld-%ld", off, off+n-1);
+	h.range = buf;
 	return hopen(con, s3, OREAD, &h);
 }
 

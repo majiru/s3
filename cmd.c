@@ -3,25 +3,42 @@
 #include <bio.h>
 #include "s3.h"
 
-void
-download(S3 *s3, char *path, Biobuf *local, int (*fn)(S3*,Hcon*,char*))
+static void
+dump(Hcon *con, Biobuf *out)
 {
 	long n;
-	Hcon con;
 	char data[8192];
 
-	if(fn(s3, &con, path) < 0)
-		sysfatal("failed to create request: %r");
 	for(;;){
-		n = read(con.body, data, sizeof data);
+		n = read(con->body, data, sizeof data);
 		if(n < 0)
 			sysfatal("download body: %r");
 		if(n == 0){
-			hclose(&con);
+			hclose(con);
 			return;
 		}
-		Bwrite(local, data, n);
+		Bwrite(out, data, n);
 	}
+}
+
+void
+download(S3 *s3, char *path, Biobuf *local, int (*fn)(S3*,Hcon*,char*))
+{
+	Hcon con;
+
+	if(fn(s3, &con, path) < 0)
+		sysfatal("failed to create request: %r");
+	dump(&con, local);
+}
+
+void
+downloadrange(S3 *s3, char *path, Biobuf *local, long off, long n)
+{
+	Hcon con;
+
+	if(s3getrange(s3, &con, path, off, n) < 0)
+		sysfatal("failed to create request: %r");
+	dump(&con, local);
 }
 
 int
