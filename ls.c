@@ -18,12 +18,14 @@ main(int argc , char **argv)
 	S3 s3;
 	int i;
 	char path[512];
+	char *pp;
 	int p[2];
 	Biobuf *b[2];
 	Xelem *x;
 
 	tmfmtinstall();
 	fmtinstall('H', encodefmt);
+	s3fmtinstall();
 	i = parseargs(&s3, argc, argv);
 	argc -= i;
 	argv += i;
@@ -42,7 +44,12 @@ main(int argc , char **argv)
 		b[0] = Bfdopen(p[0], OWRITE);
 		if(b[0] == nil)
 			sysfatal("Bfdopen: %r");
-		download(&s3, path, b[0], s3get);
+		if(path[0] == '\0')
+			pp = path;
+		else
+			pp = smprint("?list-type=2&prefix=%U", path);
+		fprint(2, "%s\n", pp);
+		download(&s3, pp, b[0], s3get);
 		Bterm(b[0]);
 		exits(nil);
 	default:

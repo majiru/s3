@@ -6,6 +6,41 @@
 #include <auth.h>
 #include "s3.h"
 
+/*
+ * S3 requires that all reserved characters within a query
+ * are URL-encoded, despite the spec not mandating it.
+ */
+static int
+queryvalfmt(Fmt *f)
+{
+	static char hex[] = "0123456789ABCDEF";
+	char *s;
+	int n;
+
+	s = va_arg(f->args, char*);
+	n = 0;
+	while(*s != '\0'){
+		switch(*s){
+		case 'a'...'z':
+		case 'A'...'Z':
+		case '0'...'9':
+			n += fmtprint(f, "%c", *s);
+			break;
+		default:
+			n += fmtprint(f, "%%%c%c", hex[(*s)>>4], hex[(*s)&15]);
+			break;
+		}
+		s++;
+	}
+	return n;
+}
+
+void
+s3fmtinstall(void)
+{
+	fmtinstall('U', queryvalfmt);
+}
+
 typedef struct {
 	uchar *payhash;
 	char *mime;
