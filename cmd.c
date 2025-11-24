@@ -21,13 +21,34 @@ dump(Hcon *con, Biobuf *out)
 	}
 }
 
+static void
+dumperr(Hcon *con)
+{
+	long n;
+	char data[8192];
+
+	for(;;){
+		n = read(con->err, data, sizeof data);
+		if(n < 0)
+			sysfatal("download errorbody: %r");
+		if(n == 0){
+			hclose(con);
+			fprint(2, "\n");
+			return;
+		}
+		fprint(2, "%.*s", (int)n, data);
+	}
+}
+
 void
 download(S3 *s3, char *path, Biobuf *local, int (*fn)(S3*,Hcon*,char*))
 {
 	Hcon con;
 
-	if(fn(s3, &con, path) < 0)
-		sysfatal("failed to create request: %r");
+	if(fn(s3, &con, path) < 0){
+		dumperr(&con);
+		sysfatal("could not create request: %r");
+	}
 	dump(&con, local);
 }
 
@@ -67,14 +88,14 @@ parseargs(S3 *s3, int argc, char **argv)
 	initial = argc;
 	s3->access = s3->endpoint = s3->region = nil;
 	ARGBEGIN{
-	case 'a':
+	case 'e':
+		s3->region = strdup(EARGF(usage()));
+		break;
+	case 'k':
 		s3->access = strdup(EARGF(usage()));
 		break;
 	case 'u':
 		s3->endpoint = strdup(EARGF(usage()));
-		break;
-	case 'r':
-		s3->region = strdup(EARGF(usage()));
 		break;
 	}ARGEND
 
@@ -85,8 +106,10 @@ parseargs(S3 *s3, int argc, char **argv)
 	if(s3->region)
 		s3->region = getenv("AWS_DEFAULT_REGION");
 
-	if(s3->access == nil || s3->endpoint == nil)
-		usage();
+	if(s3->access == nil || s3->endpoint == nil){
+		fprint(2, "no access key and/or no endpoint defined\n");
+		exits("usage");
+	}
 	if(s3->region == nil)
 		s3->region = strdup("auto");
 
