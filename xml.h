@@ -23,7 +23,7 @@ enum
 	Xmlstartonly = 1,
 };
 
-Xelem *xmlread(Biobuf *b, int flags);
+Xelem *xmlread(Biobufhdr *b, int flags);
 void xmlfree(Xelem *x);
 Xelem *xmlget(Xelem *x, char *path, ...);
 Xattr *xmlgetattr(Xattr *a, char *n);

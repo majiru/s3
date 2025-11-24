@@ -58,6 +58,8 @@ next:
 		}
 
 		memmove(o, s, rsz);
+		if(*s == 0)
+			break;
 		s += rsz;
 		o += rsz;
 	}
@@ -238,7 +240,7 @@ error:
 }
 
 Xelem *
-xmlread(Biobuf *b, int flags)
+xmlread(Biobufhdr *b, int flags)
 {
 	return xmlread_(b, nil, flags & Xmlstartonly);
 }
