@@ -10,6 +10,7 @@ TARG=\
 	ls\
 	cp\
 	write\
+	fs\
 
 HFILES=\
 	xml.h\
@@ -27,3 +28,5 @@ $O.ls: ls.$O s3.$O cmd.$O xml.$O
 $O.write: write.$O s3.$O cmd.$O xml.$O
 
 $O.cp: cp.$O s3.$O cmd.$O
+
+$O.fs: fs.$O s3.$O xml.$O cmd.$O
