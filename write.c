@@ -24,7 +24,7 @@ putpart(S3 *s3, char *path, int partno, char *uploadid, uchar *data, long n)
 	long etagn;
 
 	sha2_256(data, n, payhash, nil);
-	ret = s3put(s3, &con, smprint("%s?partNumber=%d&uploadId=%s", path, partno, uploadid), "application/octet-stream", payhash);
+	ret = s3put(s3, &con, smprint("%s?partNumber=%d&uploadId=%s", path, partno, uploadid), "application/octet-stream", payhash, n);
 	if(ret < 0)
 		sysfatal("part %d upload: s3put: %r", partno);
 	if(write(con.post, data, n) != n)

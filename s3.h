@@ -17,7 +17,7 @@ struct Hcon {
 
 int s3get(S3 *s3, Hcon *con, char *path);
 int s3del(S3 *s3, Hcon *con, char *path);
-int s3put(S3 *s3, Hcon *con, char *path, char *mime, uchar *payhash);
+int s3put(S3 *s3, Hcon *con, char *path, char *mime, uchar *payhash, long length);
 int s3post(S3 *s3, Hcon *con, char *path);
 int s3postwrite(S3 *s3, Hcon *con, char *path, char *mime, uchar *payhash);
 int s3getrange(S3 *s3, Hcon *con, char *path, long off, long n);

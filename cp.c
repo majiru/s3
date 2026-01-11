@@ -37,30 +37,33 @@ static void
 upload(S3 *s3, char *localpath, char *remotepath)
 {
 	DigestState *ds;
-	uchar data[8192];
+	uchar data[1 * 1024 * 1024];
 	char mime[32];
 	uchar digest[SHA2_256dlen];
 	long n;
 	int fd;
 	char buf[256];
 	Hcon con;
+	long length;
 
 	mimetype(localpath, mime, sizeof mime);
 	fd = open(localpath, OREAD);
 	if(fd < 0)
 		sysfatal("upload open: %r");
+	length = 0;
 	for(ds = nil;;){
 		n = read(fd, data, sizeof data);
 		if(n < 0)
 			sysfatal("file read: %r");
 		if(n == 0)
 			break;
+		length += n;
 		ds = sha2_256(data, n, nil, ds);
 	}
 	sha2_256(nil, 0, digest, ds);
 	seek(fd, 0, 0);
 
-	if(s3put(s3, &con, remotepath, mime, digest) < 0)
+	if(s3put(s3, &con, remotepath, mime, digest, length) < 0)
 		sysfatal("upload postbody open: %r");
 	for(;;){
 		n = read(fd, buf, sizeof buf);
@@ -71,8 +74,10 @@ upload(S3 *s3, char *localpath, char *remotepath)
 		if(write(con.post, buf, n) < 0)
 			sysfatal("upload write: %r");
 	}
-	if(hdone(&con) < 0)
+	if(hdone(&con) < 0){
+		dumperr(&con);
 		sysfatal("error response code: %r");
+	}
 	hclose(&con);
 }
 

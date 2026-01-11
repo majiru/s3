@@ -21,7 +21,7 @@ dump(Hcon *con, Biobuf *out)
 	}
 }
 
-static void
+void
 dumperr(Hcon *con)
 {
 	long n;

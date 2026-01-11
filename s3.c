@@ -49,6 +49,7 @@ typedef struct {
 	char time[128];
 	char authhdr[512];
 	char *range;
+	long length;
 } Hreq;
 
 static void
@@ -96,6 +97,7 @@ mkreq(Hreq *hreq, char *method, char *path, uchar *payhash, char *mime)
 	hreq->payhash = payhash;
 	hreq->mime = mime;
 	hreq->range = nil;
+	hreq->length = -1;
 }
 
 static void
@@ -170,6 +172,8 @@ prep(S3 *s3, int cfd, Hreq *hreq)
 	if(hreq->mime != nil && ctlprint(cfd, "contenttype %s", hreq->mime) < 0)
 		return -1;
 	if(hreq->range != nil && ctlprint(cfd, "headers range: %s", hreq->range) < 0)
+		return -1;
+	if(hreq->length != -1 && ctlprint(cfd, "headers content-length: %ld", hreq->length) < 0)
 		return -1;
 	return 0;
 }
@@ -279,11 +283,12 @@ s3getrange(S3 *s3, Hcon *con, char *path, long off, long n)
 }
 
 int
-s3put(S3 *s3, Hcon *con, char *path, char *mime, uchar *payhash)
+s3put(S3 *s3, Hcon *con, char *path, char *mime, uchar *payhash, long length)
 {
 	Hreq h;
 
 	mkreq(&h, "PUT", path, payhash, mime);
+	h.length = length;
 	return hopen(con, s3, ORDWR, &h);
 }
 
